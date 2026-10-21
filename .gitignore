@@ -1,0 +1,10 @@
+# Lab runtime data
+php2shell-lab/
+lab/logs/
+lab/sessions/
+*.log
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp

